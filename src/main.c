@@ -17,7 +17,7 @@ static BME280_Data env;
 SystemMode g_current_mode=MODE_STANDARD;
 SystemError g_current_error=SYS_OK;
 SystemConfig g_config={
-    .log_interval_min=10, .file_max_size=2048, .timeout_sec=30,
+    .log_interval_s=10, .file_max_size=2048, .timeout_sec=30,
     .lumin_active=1, .lumin_low=255, .lumin_high=768
 };
 uint32_t g_last_log_tick;
@@ -29,18 +29,12 @@ static bool sd_ready;
 /** Reprend le test SD de main2.c, sans dupliquer HAL, horloge, UART ou boucle principale. */
 static void initialiser_sd(void)
 {
-    printf("\r\n=== Debut du test SD Logger ===\r\n");
     sd_ready=SDLogger_Init();
-    printf("Label CS actif : %s\r\n",SDLogger_GetActiveCsLabel());
     if (sd_ready) {
         SDLoggerCardType type=SDLogger_GetCardType();
-        printf("Succes de l'initialisation de la carte SD !\r\n");
-        printf("Type de carte : %s\r\n",type==SDLOGGER_CARD_SDHC ? "SDHC" : type==SDLOGGER_CARD_SDSC ? "SDSC" : "Inconnu");
+        printf("Carte SD : initialisee (%s)\r\n",type==SDLOGGER_CARD_SDHC ? "SDHC" : type==SDLOGGER_CARD_SDSC ? "SDSC" : "type inconnu");
     } else {
-        printf("Echec initialisation SD (code : %d)\r\n",(int)SDLogger_GetLastInitStatus());
-        printf("--- Diagnostic Bit-Bang du main SD original ---\r\n");
-        (void)SDLogger_BitBangCMD0Test();
-        /* CMD0 seul ne valide pas une initialisation complete ni une ecriture. */
+        printf("Carte SD : echec initialisation (code %d)\r\n",(int)SDLogger_GetLastInitStatus());
     }
 }
 
@@ -140,13 +134,13 @@ static bool parse_uint(const char *text,uint32_t max,uint32_t *out)
 /** @brief Affiche mode, configuration, boutons, stockage et toutes les erreurs encore actives. */
 static void afficher_statut(void)
 {
-    printf("Mode=%s | erreur=%u | LOG_INTERVAL=%u min | FILE_MAX_SIZE=%lu\r\n",
+    printf("Mode=%s | erreur=%u | LOG_INTERVAL=%u s | FILE_MAX_SIZE=%lu\r\n",
            Board_ModeName(g_current_mode),(unsigned)g_current_error,
-           (unsigned)g_config.log_interval_min,(unsigned long)g_config.file_max_size);
+           (unsigned)g_config.log_interval_s,(unsigned long)g_config.file_max_size);
     printf("Bouton1 VERT=%u | Bouton2 ROUGE=%u (1=appuye)\r\n",
            (unsigned)GroveButton1_IsPressed(),(unsigned)GroveButton2_IsPressed());
-    printf("SD : %s | CS=%s | sauvegarde dans AAMMJJ_0.LOG en STANDARD et ECO.\r\n",
-           sd_ready ? "initialisee" : "echec initialisation",SDLogger_GetActiveCsLabel());
+    printf("SD : %s | sauvegarde dans AAMMJJ_0.LOG en STANDARD et ECO.\r\n",
+           sd_ready ? "initialisee" : "echec initialisation");
 }
 
 /** @brief Valide puis execute les commandes serie ; les reglages du groupe exigent CONFIGURATION. */
@@ -155,7 +149,7 @@ static void traiter_commande(const char *texte)
     Board_NotifyActivity();
     if (strcmp(texte,"HELP")==0) {
         printf("HELP | STATUS | SET AAAA-MM-JJ HH:MM:SS\r\n");
-        printf("En CONFIG : LOG_INTERVAL=minutes | FILE_MAX_SIZE=octets | RESET | VERSION\r\n");
+        printf("En CONFIG : LOG_INTERVAL=secondes | FILE_MAX_SIZE=octets | RESET | VERSION\r\n");
         printf("Vert 5 s depuis STANDARD : ECO. Rouge 5 s : STANDARD/MAINTENANCE, ECO->STANDARD.\r\n");
         printf("Rouge relache apres 0.8 a moins de 5 s depuis STANDARD : CONFIG.\r\n");
         return;
@@ -170,9 +164,9 @@ static void traiter_commande(const char *texte)
         }
         uint32_t value=0;
         if (strncmp(texte,"LOG_INTERVAL=",13)==0) {
-            if (!parse_uint(texte+13,1440U,&value) || value==0)
-                printf("ERREUR: LOG_INTERVAL doit etre entre 1 et 1440 minutes.\r\n");
-            else { g_config.log_interval_min=(uint16_t)value; printf("OK: LOG_INTERVAL configure a %u minutes\r\n",(unsigned)value); }
+            if (!parse_uint(texte+13,3600U,&value) || value==0)
+                printf("ERREUR: LOG_INTERVAL doit etre entre 1 et 3600 secondes.\r\n");
+            else { g_config.log_interval_s=(uint16_t)value; printf("OK: LOG_INTERVAL configure a %u secondes\r\n",(unsigned)value); }
         } else if (strncmp(texte,"FILE_MAX_SIZE=",14)==0) {
             if (!parse_uint(texte+14,UINT32_MAX,&value) || value==0)
                 printf("ERREUR: FILE_MAX_SIZE doit etre un entier positif sur 32 bits.\r\n");
@@ -183,7 +177,7 @@ static void traiter_commande(const char *texte)
         } else if (strcmp(texte,"VERSION")==0) {
             printf("AIVM Station Météo embarquée v1.0 - Lot #2026-A\r\n");
         } else {
-            g_config.log_interval_min=10; g_config.file_max_size=2048;
+            g_config.log_interval_s=10; g_config.file_max_size=2048;
             printf("OK: Parametres reinitialises par defaut.\r\n");
         }
         return;
@@ -280,7 +274,7 @@ static void print_sample(const Sample *s)
     else printf("BME280 indisponible : %s\r\n",BME280_Error(&bme));
     if (s->light_active) {
         if (s->light==0xFFFFU) printf("Lumiere : erreur ADC\r\n");
-        else printf("Lumiere : %u / 4095 (ADC brut)\r\n",(unsigned)s->light);
+        else printf("Lumiere : %u / 4095\r\n",(unsigned)s->light);
     }
     if (s->mode!=MODE_MAINTENANCE) {
         if (!s->gps_requested) printf("GPS : acquisition sautee volontairement (ECO, 1 sur 2).\r\n");
@@ -353,7 +347,7 @@ static void service_pending(bool fresh_gga,const GPS_Data *gps)
 int main(void)
 {
     Global_Init(); Board_Init();
-    printf("\r\nSTATION - MODES DU GROUPE IBRAHIM + CAPTEURS VALIDES\r\n");
+    printf("\r\n=== STATION METEO AIVM v1.0 ===\r\n");
     printf("Bouton1=VERT ; Bouton2=ROUGE. HELP pour les commandes.\r\n");
     initialiser_sd();
     HAL_NVIC_SetPriority(USART2_IRQn,2,0); HAL_NVIC_EnableIRQ(USART2_IRQn);
@@ -361,13 +355,10 @@ int main(void)
     bool rtc_detected=GroveRTC_Init();
     bme_ready=BME280_Init(&bme,&hi2c1);
     GroveLight_Init(); GroveGPS_Init();
-    printf("RTC : %s a 0x68 | BME280 : %s a 0x%02X\r\n",rtc_detected ? "detectee" : "non detectee",bme_ready ? "initialise" : "indisponible",(unsigned)BME280_Address(&bme));
-    printf("Lumiere ADC : %s | GPS UART4 : %s\r\n",GroveLight_IsReady() ? "initialise" : "erreur",GroveGPS_IsReady() ? "initialise, attente de trames" : "erreur");
-#ifdef TEST_INTERVAL_S
-    printf("MODE TEST : STANDARD toutes les %u s ; ECO : %u s. MAINTENANCE : affichage toutes les 2 s.\r\n",(unsigned)TEST_INTERVAL_S,(unsigned)TEST_INTERVAL_S*2U);
-#else
-    printf("STANDARD : 10 min par defaut ; ECO : 20 min. MAINTENANCE : affichage toutes les 2 s.\r\n");
-#endif
+    printf("RTC : %s | BME280 : %s\r\n",rtc_detected ? "detectee" : "non detectee",bme_ready ? "initialise" : "indisponible");
+    printf("Lumiere : %s | GPS : %s\r\n",GroveLight_IsReady() ? "initialise" : "erreur",GroveGPS_IsReady() ? "initialise" : "erreur");
+    printf("STANDARD : une mesure toutes les %u s ; ECO : toutes les %u s. MAINTENANCE : affichage toutes les 2 s.\r\n",
+           (unsigned)g_config.log_interval_s,(unsigned)g_config.log_interval_s*2U);
     if (!rtc_detected) g_current_error=ERR_RTC;
     else if (!bme_ready || !GroveLight_IsReady()) g_current_error=ERR_SENSOR;
     else if (!sd_ready) g_current_error=ERR_SD_ACCESS;
@@ -383,7 +374,7 @@ int main(void)
             if (waiting) { waiting=false; g_last_log_tick=now; printf("Acquisition en attente annulee lors du changement de mode.\r\n"); }
             printf("[MODE] %s\r\n",Board_ModeName(g_current_mode));
             previous=g_current_mode; last_maintenance=now-2000U;
-            if (g_current_mode==MODE_CONFIG) printf("LOG_INTERVAL=minutes | FILE_MAX_SIZE=octets | RESET | VERSION\r\n");
+            if (g_current_mode==MODE_CONFIG) printf("LOG_INTERVAL=secondes | FILE_MAX_SIZE=octets | RESET | VERSION\r\n");
         }
         if (g_current_mode==MODE_MAINTENANCE) {
             if (!line_size && !discard_line && (uint32_t)(now-last_maintenance)>=2000U) {
@@ -394,12 +385,7 @@ int main(void)
             if (waiting) {
                 service_pending(fresh_gga,&latest);
             } else {
-#ifdef TEST_INTERVAL_S
-                /* Mode test (platformio.ini) : une mesure toutes les TEST_INTERVAL_S secondes. */
-                uint32_t interval=(uint32_t)TEST_INTERVAL_S*1000U;
-#else
-                uint32_t interval=(uint32_t)g_config.log_interval_min*60000U;
-#endif
+                uint32_t interval=(uint32_t)g_config.log_interval_s*1000U;
                 if (g_current_mode==MODE_ECO) interval*=2U;
                 if (!line_size && !discard_line && (uint32_t)(now-g_last_log_tick)>=interval)
                     begin_sample(g_current_mode);

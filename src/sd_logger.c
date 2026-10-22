@@ -146,9 +146,6 @@ bool SDLogger_Init(void)
     uint8_t ocr[4];
     uint32_t start;
     uint8_t cmd0_try;
-    uint8_t idle_samples[8];
-    uint8_t cmd0_samples[8];
-    uint8_t sample_count;
 
     g_card_type = SDLOGGER_CARD_UNKNOWN;
     g_init_status = SDLOGGER_INIT_ERR_CMD0;
@@ -158,36 +155,19 @@ bool SDLogger_Init(void)
         SD_SetActiveChipSelect(cs_index);
         SD_Deselect();
 
-        printf("[SD diag] try CS %s\r\n", g_cs_candidates[cs_index].label);
-
         HAL_Delay(SD_POWERUP_DELAY_MS);
 
         /* Send at least 74 clocks with CS high as mandated by SD SPI mode. */
-        for (i = 0; i < 10; ++i)
+        for (i = 0; i < 18; ++i)
         {
             (void)SD_SPI_Transfer(0xFF);
         }
 
-        for (i = 0; i < 8; ++i)
-        {
-            idle_samples[i] = SD_SPI_Transfer(0xFF);
-        }
-        printf("[SD diag] MISO idle bytes: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-               idle_samples[0], idle_samples[1], idle_samples[2], idle_samples[3],
-               idle_samples[4], idle_samples[5], idle_samples[6], idle_samples[7]);
-
         r1 = 0xFFU;
-        sample_count = 0U;
         for (cmd0_try = 0; cmd0_try < 32U; ++cmd0_try)
         {
             r1 = SD_SendCommand(SD_CMD0, 0x00000000UL, 0x95U);
             SD_Deselect();
-
-            if (sample_count < 8U)
-            {
-                cmd0_samples[sample_count] = r1;
-                ++sample_count;
-            }
 
             if (r1 == SD_R1_IDLE_STATE)
             {
@@ -197,20 +177,9 @@ bool SDLogger_Init(void)
             HAL_Delay(2U);
         }
 
-        if (sample_count > 0U)
-        {
-            printf("[SD diag] CMD0 R1 first bytes:");
-            for (i = 0; i < sample_count; ++i)
-            {
-                printf(" %02X", cmd0_samples[i]);
-            }
-            printf("\r\n");
-        }
-
         if (r1 != SD_R1_IDLE_STATE)
         {
             g_init_status = SDLOGGER_INIT_ERR_CMD0;
-            printf("[SD diag] CMD0 failed on %s\r\n", g_cs_candidates[cs_index].label);
             continue;
         }
 

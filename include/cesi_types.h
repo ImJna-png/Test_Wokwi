@@ -33,7 +33,7 @@ typedef struct {
 
 // Structure de configuration globale (paramètres modifiables en Mode Configuration)
 typedef struct {
-    uint16_t log_interval_min;   // Intervalle entre 2 mesures (ex: 10 min)
+    uint16_t log_interval_s;     // Intervalle entre 2 mesures en secondes (ex: 10 s)
     uint32_t file_max_size;      // Taille max d'un fichier log en octets (ex: 2048)
     uint16_t timeout_sec;        // Timeout d'acquisition capteur en secondes (ex: 30)
 
