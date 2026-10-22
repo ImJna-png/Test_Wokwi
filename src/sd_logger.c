@@ -1,11 +1,16 @@
 #include "sd_logger.h"
 #include "board_pins.h"
 #include "stm32l4xx_hal.h"
+#include "ff.h"
 #include <stdio.h>
+#include <string.h>
 
 #define SD_CMD0     0
 #define SD_CMD1     1
 #define SD_CMD8     8
+#define SD_CMD16    16
+#define SD_CMD17    17
+#define SD_CMD24    24
 #define SD_CMD55    55
 #define SD_CMD58    58
 #define SD_ACMD41   41
@@ -25,8 +30,6 @@ typedef struct
     uint16_t pin;
     const char *label;
 } SDChipSelect;
-
-extern SPI_HandleTypeDef SD_SPI_HANDLE;
 
 static SDLoggerCardType g_card_type = SDLOGGER_CARD_UNKNOWN;
 static SDLoggerInitStatus g_init_status = SDLOGGER_INIT_ERR_CMD0;
@@ -267,6 +270,12 @@ bool SDLogger_Init(void)
             SD_Deselect();
 
             g_card_type = ((ocr[0] & 0x40U) != 0U) ? SDLOGGER_CARD_SDHC : SDLOGGER_CARD_SDSC;
+            if (g_card_type == SDLOGGER_CARD_SDSC)
+            {
+                /* SDSC : forcer des blocs de 512 octets comme FatFs. */
+                (void)SD_SendCommand(SD_CMD16, 512U, 0x01U);
+                SD_Deselect();
+            }
             g_init_status = SDLOGGER_INIT_OK;
             return true;
         }
@@ -287,6 +296,8 @@ bool SDLogger_Init(void)
             SD_Deselect();
             if (r1 == 0x00U)
             {
+                (void)SD_SendCommand(SD_CMD16, 512U, 0x01U);
+                SD_Deselect();
                 g_card_type = SDLOGGER_CARD_SDSC;
                 g_init_status = SDLOGGER_INIT_OK;
                 return true;
@@ -321,8 +332,8 @@ static void SD_ReconfigPinsGPIO(void)
 {
     GPIO_InitTypeDef gpio = {0};
 
-    /* Disable SPI1 peripheral while we take over the pins */
-    SD_SPI_HANDLE.Instance->CR1 &= ~SPI_CR1_SPE;
+    /* SPI1 n'est jamais initialise (hspi1.Instance == NULL) : on reste en bit-bang. */
+    __HAL_RCC_GPIOA_CLK_ENABLE();
 
     /* PA5 = SCK, PA7 = MOSI: push-pull outputs */
     gpio.Pin   = GPIO_PIN_5 | GPIO_PIN_7;
@@ -338,24 +349,6 @@ static void SD_ReconfigPinsGPIO(void)
     gpio.Mode = GPIO_MODE_INPUT;
     gpio.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOA, &gpio);
-}
-
-static void SD_ReconfigPinsSPI(void)
-{
-    GPIO_InitTypeDef gpio = {0};
-
-    gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_7;
-    gpio.Mode      = GPIO_MODE_AF_PP;
-    gpio.Pull      = GPIO_NOPULL;
-    gpio.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
-    gpio.Alternate = GPIO_AF5_SPI1;
-    HAL_GPIO_Init(GPIOA, &gpio);
-
-    gpio.Pin  = GPIO_PIN_6;
-    gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOA, &gpio);
-
-    SD_SPI_HANDLE.Instance->CR1 |= SPI_CR1_SPE;
 }
 
 static uint8_t SD_BitBangByte(uint8_t tx)
@@ -453,11 +446,9 @@ bool SDLogger_BitBangCMD0Test(void)
     HAL_GPIO_WritePin(SD_CS_PORT, SD_CS_PIN, GPIO_PIN_SET);
     (void)SD_BitBangByte(0xFFU);
 
-    SD_ReconfigPinsSPI();
-
     if (r1 == 0x01U)
     {
-        printf("[SD bitbang] CMD0 OK -> SPI hardware config issue\r\n");
+        printf("[SD bitbang] CMD0 OK\r\n");
         return true;
     }
 
@@ -465,12 +456,149 @@ bool SDLogger_BitBangCMD0Test(void)
     return false;
 }
 
-bool SDLogger_WriteLine(const char *filename, const char *line)
-{
-    (void)filename;
-    (void)line;
+/* ---------- blocs de 512 octets (utilises par sd_diskio.c) -------------- */
 
-    /* File write support needs FatFs + diskio SPI. */
-    return false;
+/* SDHC : adresse en numero de bloc ; SDSC : adresse en octets. */
+static uint32_t SD_BlockAddress(uint32_t sector)
+{
+    return (g_card_type == SDLOGGER_CARD_SDHC) ? sector : sector * 512U;
 }
 
+bool SDLogger_IsReady(void)
+{
+    return g_init_status == SDLOGGER_INIT_OK;
+}
+
+bool SDLogger_ReadBlock(uint32_t sector, uint8_t *buffer)
+{
+    uint32_t start;
+    uint8_t token = 0xFFU;
+    uint16_t i;
+
+    if (!SDLogger_IsReady())
+    {
+        return false;
+    }
+
+    if (SD_SendCommand(SD_CMD17, SD_BlockAddress(sector), 0x01U) != 0x00U)
+    {
+        SD_Deselect();
+        return false;
+    }
+
+    /* Attendre le jeton de debut de donnees 0xFE. */
+    start = HAL_GetTick();
+    while ((HAL_GetTick() - start) < 200U)
+    {
+        token = SD_SPI_Transfer(0xFF);
+        if (token != 0xFFU)
+        {
+            break;
+        }
+    }
+    if (token != 0xFEU)
+    {
+        SD_Deselect();
+        return false;
+    }
+
+    for (i = 0; i < 512U; ++i)
+    {
+        buffer[i] = SD_SPI_Transfer(0xFF);
+    }
+    (void)SD_SPI_Transfer(0xFF); /* CRC ignore */
+    (void)SD_SPI_Transfer(0xFF);
+    SD_Deselect();
+    return true;
+}
+
+bool SDLogger_WriteBlock(uint32_t sector, const uint8_t *buffer)
+{
+    uint8_t response;
+    uint16_t i;
+    bool ok;
+
+    if (!SDLogger_IsReady())
+    {
+        return false;
+    }
+
+    if (SD_SendCommand(SD_CMD24, SD_BlockAddress(sector), 0x01U) != 0x00U)
+    {
+        SD_Deselect();
+        return false;
+    }
+
+    (void)SD_SPI_Transfer(0xFF);
+    (void)SD_SPI_Transfer(0xFE); /* jeton de debut de donnees */
+    for (i = 0; i < 512U; ++i)
+    {
+        (void)SD_SPI_Transfer(buffer[i]);
+    }
+    (void)SD_SPI_Transfer(0xFF); /* CRC factice */
+    (void)SD_SPI_Transfer(0xFF);
+
+    /* xxx00101 = donnees acceptees ; ensuite la carte tient MISO a 0 tant qu'elle ecrit. */
+    response = SD_SPI_Transfer(0xFF);
+    ok = ((response & 0x1FU) == 0x05U) && SD_WaitReady(500U);
+    SD_Deselect();
+    return ok;
+}
+
+bool SDLogger_Sync(void)
+{
+    bool ok;
+
+    SD_Select();
+    ok = SD_WaitReady(500U);
+    SD_Deselect();
+    return ok;
+}
+
+/* ---------- ecriture d'une ligne dans un fichier (FatFs) ----------------- */
+
+static FATFS g_fs;
+static bool g_mounted = false;
+
+bool SDLogger_WriteLine(const char *filename, const char *line)
+{
+    FIL file;
+    UINT written = 0;
+    UINT len = (UINT)strlen(line);
+    FRESULT res;
+
+    if (!SDLogger_IsReady())
+    {
+        return false;
+    }
+
+    if (!g_mounted)
+    {
+        res = f_mount(&g_fs, "", 1);
+        if (res != FR_OK)
+        {
+            printf("[SD] f_mount erreur %d\r\n", (int)res);
+            return false;
+        }
+        g_mounted = true;
+    }
+
+    /* Ouvre le fichier (le cree s'il n'existe pas) et se place a la fin. */
+    res = f_open(&file, filename, FA_WRITE | FA_OPEN_APPEND);
+    if (res != FR_OK)
+    {
+        printf("[SD] f_open(%s) erreur %d\r\n", filename, (int)res);
+        g_mounted = false;
+        return false;
+    }
+
+    res = f_write(&file, line, len, &written);
+    if (f_close(&file) != FR_OK || res != FR_OK || written != len)
+    {
+        printf("[SD] ecriture erreur %d (%u/%u octets)\r\n", (int)res, (unsigned)written, (unsigned)len);
+        g_mounted = false;
+        return false;
+    }
+
+    return true;
+}

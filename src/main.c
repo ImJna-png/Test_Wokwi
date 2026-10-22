@@ -145,7 +145,7 @@ static void afficher_statut(void)
            (unsigned)g_config.log_interval_min,(unsigned long)g_config.file_max_size);
     printf("Bouton1 VERT=%u | Bouton2 ROUGE=%u (1=appuye)\r\n",
            (unsigned)GroveButton1_IsPressed(),(unsigned)GroveButton2_IsPressed());
-    printf("SD : %s | CS=%s | test initialisation uniquement, pas de sauvegarde.\r\n",
+    printf("SD : %s | CS=%s | sauvegarde dans AAMMJJ_0.LOG en STANDARD et ECO.\r\n",
            sd_ready ? "initialisee" : "echec initialisation",SDLogger_GetActiveCsLabel());
 }
 
@@ -178,7 +178,7 @@ static void traiter_commande(const char *texte)
                 printf("ERREUR: FILE_MAX_SIZE doit etre un entier positif sur 32 bits.\r\n");
             else {
                 g_config.file_max_size=value;
-                printf("OK: FILE_MAX_SIZE=%lu octets (SD non active dans ce paquet).\r\n",(unsigned long)value);
+                printf("OK: FILE_MAX_SIZE=%lu octets (pas encore applique a l'ecriture SD).\r\n",(unsigned long)value);
             }
         } else if (strcmp(texte,"VERSION")==0) {
             printf("AIVM Station Météo embarquée v1.0 - Lot #2026-A\r\n");
@@ -287,8 +287,31 @@ static void print_sample(const Sample *s)
         else if (!s->gps_received) printf("GPS : delai depasse, aucune GGA recue pour cette acquisition.\r\n");
         else if (!s->gps.valid) printf("GPS : recherche de position | satellites=%u | qualite=%u\r\n",(unsigned)s->gps.satellites,(unsigned)s->gps.fix_quality);
         else printf("GPS : latitude=%.6f | longitude=%.6f | satellites=%u | qualite=%u\r\n",s->gps.latitude,s->gps.longitude,(unsigned)s->gps.satellites,(unsigned)s->gps.fix_quality);
-        printf("[SD] Pilote de test : acquisition affichee sur la console, pas de sauvegarde.\r\n");
     }
+}
+/** @brief Ajoute une ligne CSV dans AAMMJJ_0.LOG ; "NA" pour une valeur absente. */
+static bool save_sample(const Sample *s)
+{
+    char name[20], date[40], bme[40], light[8], gps[32], row[128];
+    if (s->rtc_ok) {
+        snprintf(name,sizeof name,"%02u%02u%02u_0.LOG",(unsigned)(s->dt.year%100U),(unsigned)s->dt.month,(unsigned)s->dt.day);
+        snprintf(date,sizeof date,"%02u/%02u/%04u;%02u:%02u:%02u",(unsigned)s->dt.day,(unsigned)s->dt.month,(unsigned)s->dt.year,
+                 (unsigned)s->dt.hours,(unsigned)s->dt.minutes,(unsigned)s->dt.seconds);
+    } else {
+        snprintf(name,sizeof name,"NODATE_0.LOG");
+        snprintf(date,sizeof date,"NA;NA");
+    }
+    if (s->bme_ok) snprintf(bme,sizeof bme,"%.2f;%.2f;%.2f",s->env.temperature_c,s->env.humidity_percent,s->env.pressure_hpa);
+    else snprintf(bme,sizeof bme,"NA;NA;NA");
+    if (s->light_active && s->light!=0xFFFFU) snprintf(light,sizeof light,"%u",(unsigned)s->light);
+    else snprintf(light,sizeof light,"NA");
+    if (s->gps_received && s->gps.valid) snprintf(gps,sizeof gps,"%.6f;%.6f",s->gps.latitude,s->gps.longitude);
+    else snprintf(gps,sizeof gps,"NA;NA");
+    snprintf(row,sizeof row,"%s;%s;%s;%s;%s\r\n",date,Board_ModeName(s->mode),bme,light,gps);
+    bool ok=SDLogger_WriteLine(name,row);
+    if (ok) printf("[SD] Ligne ajoutee dans %s\r\n",name);
+    else printf("[SD] Echec d'ecriture dans %s\r\n",name);
+    return ok;
 }
 /** Conserve la priorite RTC/capteur/GPS et signale un echec du test SD si ces capteurs sont disponibles. */
 static void update_sample_error(const Sample *s)
@@ -299,10 +322,11 @@ static void update_sample_error(const Sample *s)
     else if (!sd_ready) g_current_error=ERR_SD_ACCESS;
     else g_current_error=SYS_OK;
 }
-/** Termine et affiche l'acquisition existante, sans ajouter de systeme de fichiers. */
+/** Termine l'acquisition : l'affiche puis l'enregistre sur la SD (STANDARD et ECO uniquement). */
 static void finish_sample(void)
 {
     update_sample_error(&pending); print_sample(&pending);
+    if (sd_ready && !save_sample(&pending) && g_current_error==SYS_OK) g_current_error=ERR_SD_ACCESS;
     g_last_log_tick=HAL_GetTick(); waiting=false;
 }
 /** @brief Lance une acquisition ; en ECO, ne demande le GPS qu'une fois sur deux. */
