@@ -285,7 +285,10 @@ static void print_sample(const Sample *s)
     if (s->mode!=MODE_MAINTENANCE) {
         if (!s->gps_requested) printf("GPS : acquisition sautee volontairement (ECO, 1 sur 2).\r\n");
         else if (!s->gps_received) printf("GPS : delai depasse, aucune GGA recue pour cette acquisition.\r\n");
-        else if (!s->gps.valid) printf("GPS : recherche de position | satellites=%u | qualite=%u\r\n",(unsigned)s->gps.satellites,(unsigned)s->gps.fix_quality);
+        else if (!s->gps.valid) {
+            printf("GPS : recherche de position | satellites=%u | qualite=%u\r\n",(unsigned)s->gps.satellites,(unsigned)s->gps.fix_quality);
+            printf("GPS trame brute : %s\r\n",s->gps.raw_sentence); /* diagnostic : 7e champ = qualite du fix */
+        }
         else printf("GPS : latitude=%.6f | longitude=%.6f | satellites=%u | qualite=%u\r\n",s->gps.latitude,s->gps.longitude,(unsigned)s->gps.satellites,(unsigned)s->gps.fix_quality);
     }
 }
