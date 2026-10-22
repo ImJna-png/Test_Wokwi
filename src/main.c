@@ -363,7 +363,11 @@ int main(void)
     GroveLight_Init(); GroveGPS_Init();
     printf("RTC : %s a 0x68 | BME280 : %s a 0x%02X\r\n",rtc_detected ? "detectee" : "non detectee",bme_ready ? "initialise" : "indisponible",(unsigned)BME280_Address(&bme));
     printf("Lumiere ADC : %s | GPS UART4 : %s\r\n",GroveLight_IsReady() ? "initialise" : "erreur",GroveGPS_IsReady() ? "initialise, attente de trames" : "erreur");
+#ifdef TEST_INTERVAL_S
+    printf("MODE TEST : STANDARD toutes les %u s ; ECO : %u s. MAINTENANCE : affichage toutes les 2 s.\r\n",(unsigned)TEST_INTERVAL_S,(unsigned)TEST_INTERVAL_S*2U);
+#else
     printf("STANDARD : 10 min par defaut ; ECO : 20 min. MAINTENANCE : affichage toutes les 2 s.\r\n");
+#endif
     if (!rtc_detected) g_current_error=ERR_RTC;
     else if (!bme_ready || !GroveLight_IsReady()) g_current_error=ERR_SENSOR;
     else if (!sd_ready) g_current_error=ERR_SD_ACCESS;
@@ -390,7 +394,12 @@ int main(void)
             if (waiting) {
                 service_pending(fresh_gga,&latest);
             } else {
+#ifdef TEST_INTERVAL_S
+                /* Mode test (platformio.ini) : une mesure toutes les TEST_INTERVAL_S secondes. */
+                uint32_t interval=(uint32_t)TEST_INTERVAL_S*1000U;
+#else
                 uint32_t interval=(uint32_t)g_config.log_interval_min*60000U;
+#endif
                 if (g_current_mode==MODE_ECO) interval*=2U;
                 if (!line_size && !discard_line && (uint32_t)(now-g_last_log_tick)>=interval)
                     begin_sample(g_current_mode);
