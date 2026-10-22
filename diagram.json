@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "author": "Anonymous maker",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-breadboard-mini", "id": "bb1", "top": 113.8, "left": 237.6, "attrs": {} },
+    {
+      "type": "board-st-nucleo-c031c6",
+      "id": "nucleo",
+      "top": 20.03,
+      "left": -106.58,
+      "attrs": {}
+    },
+    { "type": "wokwi-hc-sr04", "id": "ultrasonic1", "top": 30.3, "left": 274.3, "attrs": {} },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 150,
+      "left": 243.8,
+      "attrs": { "color": "limegreen" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 215.15,
+      "left": 259.2,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 158.4,
+      "left": 335.45,
+      "rotate": 90,
+      "attrs": { "value": "1000" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": 158.4,
+      "left": 345.05,
+      "rotate": 90,
+      "attrs": { "value": "2000" }
+    }
+  ],
+  "connections": [
+    [ "$serialMonitor:TX", "nucleo:PA3", "", [] ],
+    [ "$serialMonitor:RX", "nucleo:PA2", "", [] ],
+    [ "ultrasonic1:VCC", "bb1:11t.a", "", [ "$bb" ] ],
+    [ "ultrasonic1:TRIG", "bb1:12t.a", "", [ "$bb" ] ],
+    [ "ultrasonic1:ECHO", "bb1:13t.a", "", [ "$bb" ] ],
+    [ "ultrasonic1:GND", "bb1:14t.a", "", [ "$bb" ] ],
+    [ "led1:A", "bb1:3b.f", "", [ "$bb" ] ],
+    [ "led1:C", "bb1:2b.f", "", [ "$bb" ] ],
+    [ "nucleo:5V.2", "bb1:1b.j", "red", [ "h-47.55", "v134.4", "h364.8", "v-9.6" ] ],
+    [ "bb1:1b.i", "bb1:11t.b", "red", [ "v0" ] ],
+    [ "r2:1", "bb1:13t.b", "", [ "$bb" ] ],
+    [ "r2:2", "bb1:13b.f", "", [ "$bb" ] ],
+    [ "r3:1", "bb1:14t.b", "", [ "$bb" ] ],
+    [ "r3:2", "bb1:14b.f", "", [ "$bb" ] ],
+    [ "bb1:14b.g", "bb1:17b.g", "black", [ "v0" ] ],
+    [ "r1:1", "bb1:2b.i", "", [ "$bb" ] ],
+    [ "r1:2", "bb1:8b.i", "", [ "$bb" ] ],
+    [ "r1:2", "bb1:17b.i", "black", [ "v0" ] ],
+    [ "bb1:13b.g", "nucleo:D5", "gold", [ "v0" ] ],
+    [ "bb1:3b.g", "nucleo:D3", "gold", [ "v0" ] ],
+    [ "bb1:12t.b", "nucleo:D2", "green", [ "v0" ] ],
+    [ "bb1:17b.j", "nucleo:GND.5", "black", [ "v144", "h-528", "v-134.4" ] ]
+  ],
+  "dependencies": {}
+}
